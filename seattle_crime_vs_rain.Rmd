@@ -1,0 +1,765 @@
+---
+title: "Seattle Criminals Don't Mind the Rain"
+author: "Patricia Tressel"
+date: "January 25, 2016"
+output: html_document
+---
+
+## The Question...
+
+Are some crimes less likely to happen when it's raining...or more likely?
+Do criminals prefer rain, or avoid it, for particular crimes?
+
+Seattle is notorious for its rain.  I live in Seattle, and can attest to
+the rain...though it's less prevalent than its reputation would have one
+believe.  Nevertheless, Seattle has a good mix of rainiy and sunny weather,
+so provides an opportunity for exploring weather-dependent activity
+choices...including crimes.
+
+This is an attempt to explore whether some crimes are less, or more, likely
+than others to happen during the rain.  Perhaps some crimes are hindered
+by rain, or criminals, like other folks, just tend to stay inside when it's
+raining.  On the other hand, perhaps some criminals find rain provides
+cover for their activities.  Is there a relationship between rain, and
+whether the crime is typically performed outdoors?
+
+The focus here is on human exploration of the data, and the use of
+visualization to convey information, rather than automated analysis.
+So there will be at least as much discussion of how to display the
+information as there is about the question of crime versus rain.
+
+## Sources of data
+
+### Crime data
+
+This uses four years of crime data, for the years 2012 through 2015, obtained
+from:
+
+https://data.seattle.gov/Public-Safety/Seattle-Police-Department-Police-Report-Incident/7ais-f98f
+
+The fields from this dataset that will be used here are:
+
+* Summarized.Offense.Description: the crime category
+* Occurred.Date.or.Date.Range.Start: the starting date of the crime
+
+(Note to fellow students in Dr. Howe's Communicating Data Science Results
+course:  This is not the supplied dataset, but rather is a superset of it,
+from the same source.)
+
+### Weather data
+
+Data on daily precipitation is from Weather Underground, for their nearest
+reference location, which is at the Boeing airfield south of downtown Seattle.
+
+http://www.wunderground.com/history/airport/KBFI/2012/1/1/CustomHistory.html
+
+(The above URL shows one day of data -- to obtain more, set the ending date
+as well.)
+
+This dataset contains meteorological information for each day, incuding:
+
+* PrecipitationIn: the total precipitation that day, in inches
+* Events: a set of binary flags indicating rain, snow, thunderstorm, fog.
+
+## Reproducing these results
+
+The source for this document is available here:
+
+https://github.com/ptressel/seattle_crime_vs_rain
+
+This document is generated from an R markdown file containing runnable code,
+that can be processed to produce this document.  It would be good to look at
+the document source while reading this, so please open the source here:
+
+https://github.com/ptressel/seattle_crime_vs_rain/seattle_crime_vs_rain.Rmd
+
+If you would like to run this, first clone or download the git repository
+linked above.  In addition to the R markdown file, the repository contains 
+he crime and weather data.
+
+You will need the current versions of R and RStudio, and the following R
+packages:
+
+* ggplot2
+* lubridate
+* plyr
+* reshape2
+* (Other packages that the above are dependent on, which will be installed
+  along with the above packages.)
+
+Start RStudio, change the directory to the repository, open the file
+seattle_crime_vs_rain.Rmd, and click Knit HTML.  This is not running large
+statistical computations or training machine learning models, so should run
+fairly quickly.  As always, for security, please examine carefully any code
+before you run it.
+
+All code blocks are hidden.  If you would like to see this with the
+interleaved code, remove the echo=FALSE from each {r ...} code chunk header.
+You can also remove cache=TRUE to avoid having this write intermediate results
+out to disk.
+
+Ok!  Let's get started!
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+# Load all the necessary packages here.  If these fail, stop and install them.
+require(ggplot2, quietly=TRUE)
+require(lubridate, quietly=TRUE)
+require(plyr, quietly=TRUE)
+require(reshape2, quietly=TRUE)
+```
+
+```{r crime_data, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+# ===== Crime data =====
+
+# Read in and clean up the Seattle crime data.  Note this does not strip out
+# all but the bare minimum set of columns -- others are retained and cleaned
+# up, in hope of getting a chance to do further analysis.
+
+seattle_4yr <- read.csv("seattle_incidents_2012_2015.csv")
+# > nrow(seattle_4yr)
+# [1] 365243
+
+# Remove columns that definitely won't be used.
+seattle_unneeded_columns <- c(
+    "RMS.CDW.ID",
+    "General.Offense.Number",
+    "Offense.Code",
+    "Offense.Code.Extension",
+    "Summary.Offense.Code",
+    "Date.Reported",
+    "Occurred.Date.Range.End",
+    "Hundred.Block.Location",
+    "Location"
+)
+seattle_4yr[, seattle_unneeded_columns] <- list(NULL)
+
+# Remove rows with missing data.
+seattle_4yr_no_location <- which(seattle_4yr$Latitude==0.0 | seattle_4yr$Longitude==0.0)
+# > length(seattle_4yr_no_location)
+# [1] 4390
+seattle_4yr <- seattle_4yr[-seattle_4yr_no_location,]
+
+# Save the original category names, before we remove any.
+seattle_crime_categories_original <-
+    unique(levels(seattle_4yr$Summarized.Offense.Description))
+seattle_crime_subtypes_original <-
+    unique(levels(seattle_4yr$Offense.Type))
+
+# Remove unwanted categories -- administrative, informational.
+seattle_unwanted_crime_categories <- c(
+    "[INC - CASE DC USE ONLY]",
+    "STAY OUT OF AREA OF PROSTITUTION",
+    "STAY OUT OF AREA OF DRUGS",
+    "WARRANT ARREST",
+    "FALSE REPORT"
+)
+# Also exclude low-frequency crimes.  Requiring # samples >= 100 drops 14
+# categories.
+seattle_category_counts <- table(seattle_4yr$Summarized.Offense.Description)
+seattle_category_lt_100 <-
+    names(seattle_category_counts)[seattle_category_counts < 100]
+# Remove the rows with those categories.
+seattle_4yr <-
+    seattle_4yr[!(seattle_4yr$Summarized.Offense.Description %in%
+                  c(seattle_unwanted_crime_categories,
+                    seattle_category_lt_100)), ]
+# And remove those as factor levels.
+seattle_4yr <- droplevels(seattle_4yr)
+
+# As a sanity check, get the remaining categories and subtypes.
+seattle_4yr_crime_categories_subtypes <-
+    unique(seattle_4yr[, c("Summarized.Offense.Description", "Offense.Type")])
+idx <- order(seattle_4yr_crime_categories_subtypes$Summarized.Offense.Description,
+             seattle_4yr_crime_categories_subtypes$Offense.Type)
+seattle_4yr_crime_categories_subtypes <- seattle_4yr_crime_categories_subtypes[idx,]
+row.names(seattle_4yr_crime_categories_subtypes) <- NULL
+# write.csv(seattle_4yr_crime_categories_subtypes,
+#           "seattle_4yr_crime_categories_subtypes.csv", row.names=FALSE)
+
+# Extract date and time info.
+seattle_4yr$RDateTime <- mdy_hms(seattle_4yr$Occurred.Date.or.Date.Range.Start,
+                             tz="America/Los_Angeles")
+seattle_4yr$RDate <- ymd(format(seattle_4yr$RDateTime, format="%Y-%m-%d"),
+                     tz="America/Los_Angeles")
+seattle_4yr$RTime <- hour(seattle_4yr$RDateTime)
+# Remove the old date/time column.
+seattle_4yr$Occurred.Date.or.Date.Range.Start <- NULL
+
+# ===== Change the crime type column names =====
+
+# Although it's nice to retain the original names, their meanings just aren't
+# clear.  And we'd need to change the names to match schemas across cities
+# anyway.  For now, although we won't be matching schemas, do change the
+# names to something more readable.
+colnames(seattle_4yr)[colnames(seattle_4yr) ==
+                      "Summarized.Offense.Description"] <- "Crime.Category"
+colnames(seattle_4yr)[colnames(seattle_4yr) ==
+                      "Offense.Type"] <- "Crime.Subtype"
+```
+
+```{r weather_data, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+# ===== Weather data =====
+
+# This data is for Boeing Field, which is south of downtown Seattle.
+# Data provided by Weather Underground, available here:
+# http://www.wunderground.com/history/airport/KBFI/2016/1/22/DailyHistory.html?req_city=&req_state=&req_statename=&reqdb.zip=&reqdb.magic=&reqdb.wmo=
+# Select Custom, then enter date range, and Submit.  Link to download CSV file
+# is below the displayed data.  Note I downloaded the data in batches, not all
+# at once, and concatenated it.  I don't know if there is a restriction on the
+# download size.
+seattle_weather <- read.csv("seattle_weather.csv")
+
+# Get date in same format as crime data -- we'll have to join on this field.
+seattle_weather$RDate <- ymd(seattle_weather$PST, tz="America/Los_Angeles")
+
+# Remove columns that definitely will not be used.
+seattle_weather_unneeded_columns <- c(
+    "PST",
+    "Max.Dew.PointF",
+    "MeanDew.PointF",
+    "Min.DewpointF",
+    "Max.Humidity",
+    "Mean.Humidity",
+    "Min.Humidity",
+    "Max.Sea.Level.PressureIn",
+    "Mean.Sea.Level.PressureIn",
+    "Min.Sea.Level.PressureIn",
+    "Max.VisibilityMiles",
+    "Mean.VisibilityMiles",
+    "Min.VisibilityMiles",
+    "Max.Gust.SpeedMPH",
+    "WindDirDegrees"
+)
+seattle_weather[, seattle_weather_unneeded_columns] <- list(NULL)
+
+# The only field that actually needs cleaning is Events -- it has compound
+# names like Fog-Rain.  Want to convert those to binary columns.  Keep all
+# the events for now.  These are: Fog, Rain, Snow, Thunderstorm.
+weather_events_text <- levels(seattle_weather$Events)
+weather_events <- c("Fog", "Rain", "Snow", "Thunderstorm")
+# This needs to be told that seattle_weather is in the global scope.
+extract_event <- function(evt) {
+    # Given an event name, grep the Events column and return TRUE or FALSE
+    # depending on whether that name appears in the Events text.
+    pattern <- paste0(".*", evt, ".*")
+    grepl(evt, .GlobalEnv$seattle_weather$Events)
+}
+seattle_weather$Fog <- extract_event("Fog")
+seattle_weather$Rain <- extract_event("Rain")
+seattle_weather$Snow <- extract_event("Snow")
+seattle_weather$Thunderstorm <- extract_event("Thunderstorm")
+# > sum(seattle_weather$Fog)
+# [1] 97
+# > sum(seattle_weather$Rain)
+# [1] 835
+# > sum(seattle_weather$Snow)
+# [1] 24
+# > sum(seattle_weather$Thunderstorm)
+# [1] 18
+# Does Thunderstorm refer only to the electrical component of the storm?
+# There are separate Event types Rain, Rain-Thunderstorm, and Thunderstorm,
+# so that is likely true.
+# To check, look at:  How much does Thunderstorm co-occur with Rain?
+# How much precipitation is there on days with Thunderstorm but no Rain?
+# > table(seattle_weather$Rain, seattle_weather$Thunderstorm)
+#         FALSE TRUE
+#   FALSE   989    2
+#   TRUE    819   16
+# > max(seattle_weather$PrecipitationIn[seattle_weather$Thunderstorm & !seattle_weather$Rain])
+# [1] 0
+# Also, should Snow be lumped in with Rain for crime influence?  How much
+# overlap is there between Rain and Snow?
+# > table(seattle_weather$Rain, seattle_weather$Snow)
+#         FALSE TRUE
+#   FALSE   981   10
+#   TRUE    821   14
+# Go ahead and lump snow in with rain.  There aren't enough snow rows to get
+# separate stats for them.  Add a combined indicator column.
+seattle_weather$Rain.Snow <-
+    seattle_weather$Rain | seattle_weather$Snow
+```
+
+```{r merge_datasets, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+# ===== Join weather to crime data =====
+
+# Here, we need to match up the dates in the crime and weather data, and
+# add columns in the crime data for the weather data of the same date.
+# The join column is RDate, and has the same name in both the crime and
+# weather data.
+# > intersect(colnames(seattle_4yr), colnames(seattle_weather))
+# [1] "RDate"
+
+seattle_4yr_weather <- merge(seattle_4yr, seattle_weather, all.x=TRUE)
+```
+
+## What we're attempting...and a request for advice
+
+This is intended to *visually* explore the relationship between occurrence
+of various crime types, and the amount of rain on the same day.  This is
+chosen precisely because it is an awkward visualization task, for these
+reasons:
+
+* There are many categories.  This makes for visual clutter and over-long
+  plots or charts.
+* Because the identity of the categories is important -- we want to see whether
+  they may be "indoor" or "outdoor", or have some other rain-related features
+  in common -- the names need to be shown.
+* There is only one other dimension -- rain -- against which the category is
+  being compared.  Having at least two dimensions of numerical data allows
+  displays like scatterplots that are visually informative -- they spread
+  out the data and allow one to more easily see patterns.
+
+So, I'd like to ask any students who are reviewing this for Dr. Howe's class,
+please leave recommendations somewhere in the review, or come find me online
+in the course forum.  Here are some questions on which I'd like your opinion
+and suggestions:
+
+* How would you change the current visualizations?
+* Can you think of other ways of visually comparing the crime categories and
+  amount of precipitation?
+* In addition to the main categories, there are many more crime subtypes
+  within the main categories.  What sort of display might accommodate those?
+* Would an interactive display be useful?  For instance:
+    * Something that allows collapsing part of a display, and zooming in on the
+      rest?
+    * Or that allows combining categories into groups to merge together?
+    * Or that starts with details hidden, and allows the user to request
+      additional information?
+
+Thanks!
+
+```{r weather_events, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+# Pause here and have a look at the values of PrecipitationIn for each of the
+# two cases in the daily weather data, to get an idea of what Wunderground
+# means by the tags.
+
+seattle_rainsnow <- seattle_weather$Rain | seattle_weather$Snow
+seattle_precip_mean_by_rainsnow <-
+    tapply(seattle_weather$PrecipitationIn, seattle_rainsnow, mean)
+seattle_precip_median_by_rainsnow <-
+    tapply(seattle_weather$PrecipitationIn, seattle_rainsnow, median)
+seattle_precip_min_by_rainsnow <-
+    tapply(seattle_weather$PrecipitationIn, seattle_rainsnow, min)
+seattle_precip_max_by_rainsnow <-
+    tapply(seattle_weather$PrecipitationIn, seattle_rainsnow, max)
+# > seattle_precip_mean_by_rainsnow
+#        FALSE         TRUE
+# 0.0008154944 0.2090059172
+# > seattle_precip_median_by_rainsnow
+# FALSE  TRUE
+#  0.00  0.09
+# > seattle_precip_min_by_rainsnow
+# FALSE  TRUE
+#     0     0
+# > seattle_precip_max_by_rainsnow
+# FALSE  TRUE
+#  0.08  2.49
+```
+
+## Some notes on the data
+
+Seattle has little snow, and snow is, if anything, more disruptive than rain
+(especially in Seattle, where people have little experience dealing with it,
+and the entire city grinds to a halt...).  The weather dataset does not
+distinguish rain and snow in the amount of precipitation it reports.
+
+In the weather dataset, each day is assigned one or more binary flags in the
+Events field: Rain, Snow, Thunderstorm, Fog.  It is not clear what the purpose
+of the flags are.  In particular, the Rain flag is not related to some level
+of precipitation for the day -- the Rain flag is found on days with zero
+precipitation.  For this reason, the Rain flag was abandoned as unreliable,
+and we'll rely on the amount of precipitation.
+
+The precipitation values are in inches per day, and range from 0.0 to 2.49.
+They are limited to two places of accuracy to the right of the decimal point.
+Over the four years of data,
+`r round(100 * sum(seattle_weather$PrecipitationIn == 0) / nrow(seattle_weather))` %
+have no precipitation at all.  The distribution of precipitation amounts
+on days that have any precipitation is:
+
+```{r precip, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+seattle_precip_breaks <- seq(from = 0.0, to = 2.5, by = 0.1)
+seattle_days_with_nonzero_precip <- seattle_weather$PrecipitationIn > 0
+par(oma=c(0,0,0,0), mar=c(5,5,1,1))
+hist(seattle_weather$PrecipitationIn[seattle_days_with_nonzero_precip],
+     breaks = seattle_precip_breaks,
+     freq = FALSE,
+     xlab = "Precipitation (inches)",
+     main = NULL)
+box()
+box(which = "figure")
+```
+
+The crime dataset has two fields for types of offenses.  One,
+Summarized.Offense.Description, has
+`r length(seattle_crime_categories_original)` values, and the other,
+Offense.Type, has `r length(seattle_crime_subtypes_original)` values.
+The Offense.Type values are nested under the Summarized.Offense.Description
+values, i.e. the Summarized.Offense.Description values are main categories,
+and the Offense.Type values are subtypes.
+
+Among the main categories are several that are bookkeeping or operational
+types, rather than crimes, such as warrants being served.  Others are rare.
+We have `r nrow(seattle_4yr)` records in the crime data, over four years.
+We'll drop categories that have fewer than 100 records, which means there
+are fewer than 25 of those offenses per year on average.  With those
+changes, we're left with `r length(levels(seattle_4yr$Crime.Category))`
+crime categories.  That is still a lot of categories to squeeze into one
+plot or chart.  For now, we'll look only at those main categories rather
+than the subtypes.
+
+## Approaches
+
+In order to see if some crimes are associated with rain and others with
+the lack of rain, we can view this question from (at least) two directions:
+
+* How much rain is typically present when each sort of crime is perpetrated?
+* For different amounts of rain, how frequent is each crime?
+
+### Is there a difference in precipitation per crime category?
+
+For each crime category, we aggregate and compute summary statistics on the
+daily precipitation.
+
+Because a majority of days have no rain, the median amount of rain for most
+categories is zero, which renders the median useless for displaying how
+much rain is present per category.  Instead, we'll use the mean precipitation
+per day.
+
+We'll also want to show how variable the amount of rain is per category --
+if we just show the mean, that's misleading if the samples for that category
+aren't closely centered about the mean.  As it turns out, the range of
+precipitation amounts is quite broad for nearly all categories.  It's common
+to show the 25% and 75% quantiles to show the spread, but as with the median,
+that is not very informative -- the lower quartile is nearly always zero,
+and the upper quartiles tend to be at about the same value.  Instead, we'll
+display the spread by showing a bar the length of the standard deviation,
+on either side of the mean, but truncated at the limits of the precipitation
+values.
+
+In addition to the location and spread of the precipitation values, we'd
+like to also indicate how reliable each category's information is.  That is,
+how many samples do we have for that category?  If we have lots of examples
+of some crime category, we can have more confidence that its mean is
+not just a quirk of this dataset.  To show this, the marker showing the
+mean is colored by the frequency of the category.
+
+This will be rendered as a web page, not a PDF file, in order to avoid issues
+with margins and page breaks that could interfere with large plots.  Because
+it's easier to scroll vertically, and easier to read English text when it's
+horizontal, the plot will show the categories along the Y axis.
+
+The categories are ordered by mean, with the largest at the top.  This makes
+it easier to see if there are any patterns or breaks.  So, have a look, and
+then we'll draw some conclusions below.
+
+```{r precip_per_category, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE, fig.height=7, fig.width=7}
+
+# This uses the boxplot display, merely to get the box and whiskers drawn.
+# It sets the range of the whiskers and locations of the box ends explicitly,
+# so that they can be based on the mean and standard deviation.  The box is
+# merely a fixed width around the mean.  It's just large enough to show the
+# fill color based on frequency.
+
+# For each category, compute the mean, standard deviation, number of samples,
+# and from those the locations along the precipitation (X) axis for the ends
+# of the box and whiskers.
+box_width <- 0.01
+seattle_precip_max <- max(seattle_4yr_weather$PrecipitationIn)
+seattle_category_precip_mean <-
+    ddply(seattle_4yr_weather, .(Crime.Category), summarize,
+          mean = mean(PrecipitationIn),
+          sd_below = max(mean(PrecipitationIn) - sd(PrecipitationIn), 0.0),
+          sd_above = min(mean(PrecipitationIn) + sd(PrecipitationIn),
+                         seattle_precip_max),
+          box_below = max(mean(PrecipitationIn) - box_width, 0.0),
+          box_above = min(mean(PrecipitationIn) + box_width,
+                          seattle_precip_max),
+          nsamples = length(Crime.Category))
+
+# ggplot does not obey the order of rows in the data for factor data, but
+# rather shows it in order of the factor levels.  So to get the categories
+# shown in order by mean precipitation, re-order the factor levels in that
+# order.
+idx <- order(seattle_category_precip_mean$mean)
+seattle_category_precip_mean$Crime.Category <-
+    factor(seattle_category_precip_mean$Crime.Category,
+           levels = seattle_category_precip_mean$Crime.Category[idx])
+
+# ggplot's boxplot wants everything specified as though the box and whiskers
+# will be oriented vertically, so do what it wants, then flip the coordinates.
+seattle_category_precip_mean_squares_plot <-
+    ggplot(seattle_category_precip_mean, aes(x = Crime.Category)) +
+    geom_boxplot(aes(ymin = sd_below,
+                     lower = box_below,
+                     middle = box_below,
+                     upper = box_above,
+                     ymax = sd_above,
+                     fill = nsamples), stat = "identity") +
+    coord_flip()
+
+# Now change the colors and labels.  Find colors that aren't too jarring
+# compared to ggplot2's favored colors.  Just using two colors at the ends
+# of the gradient, only the very highest frequency categories stand out,
+# whereas most of the categories are high frequency.  Shift the midpoint
+# of the color range so that the brighter colors extend down further in
+# frequency.  The frequencies range from 100 up to 67000, since we dropped
+# categories with less than 100 samples.  Skew the color range so categories
+# with 10000 samples don't look like they're the same as categories with 100.
+col_6 <- col2rgb("hotpink")
+col_1 <- col2rgb("deeppink4")
+col_diff <- col_6 - col_1
+col_2 <- round(col_1 + col_diff * 0.6)
+col_3 <- round(col_1 + col_diff * 0.8)
+col_4 <- round(col_1 + col_diff * 0.9)
+col_5 <- round(col_1 + col_diff * 0.95)
+col_set <- c(
+    "deeppink4",
+    rgb(col_2[1], col_2[2], col_2[3], maxColorValue=255),
+    rgb(col_3[1], col_3[2], col_3[3], maxColorValue=255),
+    rgb(col_4[1], col_4[2], col_4[3], maxColorValue=255),
+    rgb(col_5[1], col_5[2], col_5[3], maxColorValue=255),
+    "hotpink"
+)
+seattle_category_precip_mean_squares_plot <-
+    seattle_category_precip_mean_squares_plot +
+    scale_fill_gradientn(name = "# Samples",
+                         colors = col_set) +
+    labs(x = "Crime Category",
+         y = "Daily precipitation (inches), mean and std dev") +
+    ggtitle("How much does precipitation vary by crime category?") +
+    theme(panel.border = element_rect(colour = "black", fill=NA),
+          plot.background = element_rect(colour = "black", fill=NA))
+
+# Show the plot.
+print(seattle_category_precip_mean_squares_plot)
+```
+
+```{r precip_per_cat_range, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+# There isn't much difference.  What's the range of means per category,
+# compared to the standard deviation of daily precip?  The range is barely
+# more than one sd.
+
+seattle_mean_precip_range <- range(seattle_category_precip_mean$mean)
+seattle_precip_sd <- sd(seattle_4yr_weather$PrecipitationIn)
+# > seattle_mean_precip_range
+# [1] 0.00 0.24
+# > seattle_precip_sd
+# [1] 0.2186769
+```
+
+So...the mean precipitation per crime category is not the same for all
+categories.  Does that mean we should proclaim that some crimes are better
+in the rain?  That when it rains, the police should be out watching for
+purse snatchers?  But wait...why is bike theft -- surely an outdoor crime --
+at the low precipitation end?
+
+What we need to look at is the *effect size*.  By how much do those means
+actually differ, and is that large compared to some meaningful scale?  This
+is not related to statistical significance -- and effect can be highly
+significant, and still be utterly trival in magnitude.
+
+The difference between the highest and lowest mean is
+`r round(seattle_mean_precip_range[2] - seattle_mean_precip_range[1], digits=2)`.  Is that a lot or a little?  What should we use for a scale?
+One scale is the standard deviation of daily precipitation,
+`r round(seattle_precip_sd, digits=2).  Those are on a par.  (Remember,
+we're not talking about significance here, so we don't want to use the
+standard deviation of the mean as a scale -- that can be made arbitrarily
+small by including more samples.)
+
+Perhaps a better scale is the standard deviations for each category.  We
+can see that the entire range of means falls within one standard deviation
+of the others.
+
+As we'll see in the next section, the span of the category means is about
+the size of precipitation ranges used for standard descriptions of
+rainfall -- light, moderate, heavy.  So by two measures derived from the
+data, the differences aren't large, though the amount is about what
+distinguishes light from moderate rain.
+
+### How often do crimes happen, per amount of precipitation?
+
+Let's try looking at this from the other side:  Start with how much
+precipitation there is, and see how often each category is associated
+with each amount of precipitation.  How can this be visualized?
+
+We could consider a scatterplot -- plot category versus precipitation.
+Each category could be given its own line, and the points be jittered
+and made transparent, so they are darker and denser when there are
+more points.  But still, the points are along single lines, and density
+of points is problematic when they are stacked directly on top of each
+other, as they are here with the limited precision of the precipitation
+values.  Even with jittering and halos, the points are discrete -- we're
+relying on having many of them to smooth out the density.
+
+Another option would be to bin the precipitation values coarsely, and
+show stacked bargraphs with a bar for each category, and bands for each
+precipitation level.  Since the bars are more broad than the lines of
+points above, and the levels will have definite cutoffs, this should be
+more precise than the overlapped points above.
+
+We don't want to obscure the relationship with precipitation by making
+more frequent crimes more prominent, so we can make all the bars the same
+height.  That is, we can show the relative frequency -- the fraction of
+time that the crime is done in each precipitation level.
+
+So, we want to bin the samples into precipitation "levels" -- what shall
+we use for those?  Too many levels will make the bargraph messy.  And
+what is the difference, really, between 0.11 and 0.12 inches per day of
+rain?  Fortunately, there are some fairly standard ways of grouping
+precipitation.  It's common for weather forecasts to say rain will be
+light, moderate, or heavy, and, it turns out, there are definitions for
+those terms.  We'll use the definitions provided here:
+
+https://www.weathershack.com/static/ed-rain-measurement.html
+
+* light: less than 0.01 inches / hour
+* moderate: from 0.01 to 0.03 per hour
+* heavy: greater than 0.03 / hour
+
+For precipitation per day, that means:
+
+* light: less than 0.01 * 24 = 0.24 inches / day
+* moderate: from 0.24 to 0.72 inches / day
+* heavy: greater than 0.72 inches / day
+
+Since we've seen that most days have no rain, we'll add a level just for
+that:
+
+* none: identically 0.0 inches / day
+
+As with the previous plot, it will be easier to understand this if the
+categories are ordered in some way by the precipitation variable.  But
+unlike the previous case, we have several options.  We could order by
+where one of the dividing lines between precipitation levels is.  Or,
+we could order by the width of one of the levels.  We should pick
+something that is meaningful to the question of criminal activity.
+Folks in Seattle, presumably including criminals, aren't bothered by a
+little rain.  So, treat no rain and light rain as levels that we don't
+expect to have in impact, where moderate and heavy might.  Order the
+categories by the height of the division between light and moderate.
+(We could try splitting at the other divisions as well, but showing this
+one case should give us an idea of whether this type of display work at
+all.)
+
+And with those choices, let's see what it looks like.
+
+```{r precip_level_vs_category, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE, fig.height=7, fig.width=7}
+
+# What we really need is an official definition of light vs. heavy rain.
+# https://www.weathershack.com/static/ed-rain-measurement.html
+# Since we have only two places of accuracy, whether the boundaries are < or
+# <= matters.  Go by the literal wording in the above definition.  Then, the
+# above defines rainfall as:
+# light: less than 0.01 in / hour
+# moderate: from 0.01 to 0.03 per hour
+# heavy: greater than 0.03 / hour
+# For precip per day, that means:
+# light: less than 0.01 * 24 = 0.24 / day
+# moderate: from 0.24 to 0.72 / day
+# heavy: greater than 0.72 / day
+# Also split out no precip.
+
+# What fraction of days fall in those there categories?
+seattle_weather_no_precip <- seattle_weather$PrecipitationIn == 0
+seattle_weather_light_precip <-
+    seattle_weather$PrecipitationIn > 0.0 &
+    seattle_weather$PrecipitationIn < 0.24
+seattle_weather_moderate_precip <-
+    seattle_weather$PrecipitationIn >= 0.24 &
+    seattle_weather$PrecipitationIn <= 0.72
+seattle_weather_heavy_precip <- seattle_weather$PrecipitationIn > 0.72
+seattle_fract_no_precip <-
+    sum(seattle_weather_no_precip) / nrow(seattle_weather)
+seattle_fract_light_precip <-
+    sum(seattle_weather_light_precip) / nrow(seattle_weather)
+seattle_fract_moderate_precip <-
+    sum(seattle_weather_moderate_precip) / nrow(seattle_weather)
+seattle_fract_heavy_precip <-
+    sum(seattle_weather_heavy_precip) / nrow(seattle_weather)
+# > seattle_fract_no_precip
+# [1] 0.5826944
+# > seattle_fract_light_precip
+# [1] 0.2820372
+# > seattle_fract_moderate_precip
+# [1] 0.1073384
+# > seattle_fract_heavy_precip
+# [1] 0.0279299
+
+# Add a factor column with those rainfall categories.
+seattle_4yr_no_precip <- seattle_4yr_weather$PrecipitationIn == 0.0
+seattle_4yr_light_precip <-
+    seattle_4yr_weather$PrecipitationIn > 0.0 & seattle_4yr_weather$PrecipitationIn < 0.24
+seattle_4yr_moderate_precip <-
+    seattle_4yr_weather$PrecipitationIn >= 0.24 & seattle_4yr_weather$PrecipitationIn <= 0.72
+seattle_4yr_heavy_precip <- seattle_4yr_weather$PrecipitationIn > 0.72
+seattle_4yr_weather$Precip.Level <- integer(length = nrow(seattle_4yr_weather))
+seattle_4yr_weather$Precip.Level[seattle_4yr_no_precip] <- 1
+seattle_4yr_weather$Precip.Level[seattle_4yr_light_precip] <- 2
+seattle_4yr_weather$Precip.Level[seattle_4yr_moderate_precip] <- 3
+seattle_4yr_weather$Precip.Level[seattle_4yr_heavy_precip] <- 4
+seattle_4yr_weather$Precip.Level <-
+    factor(seattle_4yr_weather$Precip.Level,
+           levels = c("1", "2", "3", "4"),
+           labels = c("none", "light", "moderate", "heavy"),
+           ordered = TRUE)
+
+# Show what proportion of each crime category falls in each precip level.
+# If we were only looking at (say) moderate and heavy, versus none and light,
+# then could show bars the height of one portion.  With four cases, could show
+# bars with four bands, or three, omitting none.  Also, with four cases, there
+# isn't an obvious value to order by.  Maybe order by none + light (reverse
+# order by moderate + heavy).
+
+seattle_precip_level_vs_category <-
+    prop.table(table(seattle_4yr_weather$Precip.Level,
+                     seattle_4yr_weather$Crime.Category), 2)
+names(dimnames(seattle_precip_level_vs_category)) <- c("Precip.Level", "Crime.Category")
+
+# ggplot wants that in a data frame not a matrix.
+seattle_precip_level_vs_category_df <-
+    melt(seattle_precip_level_vs_category, as.is = TRUE, value.name = "Fraction")
+seattle_precip_level_vs_category_df$Precip.Level <-
+    factor(seattle_precip_level_vs_category_df$Precip.Level,
+           levels = c("none", "light", "moderate", "heavy"), ordered = TRUE)
+idx <- order(seattle_precip_level_vs_category["none",] +
+             seattle_precip_level_vs_category["light",])
+seattle_category_by_precip <- dimnames(seattle_precip_level_vs_category)[[2]][idx]
+seattle_precip_level_vs_category_df$Crime.Category <-
+    factor(seattle_precip_level_vs_category_df$Crime.Category,
+           levels = seattle_category_by_precip)
+
+seattle_precip_level_vs_category_barplot <-
+    ggplot(seattle_precip_level_vs_category_df,
+           aes(x = Crime.Category, y = Fraction, fill = Precip.Level)) +
+    geom_bar(position = "fill", stat = "identity") +
+    labs(x = "Crime Category", y = NULL, fill = "Precipitation\nLevel") +
+    coord_flip() +
+    ggtitle("Fraction of precipitation levels per crime category") +
+    theme(panel.border = element_rect(colour = "black", fill=NA),
+          plot.background = element_rect(colour = "black", fill=NA))
+
+print(seattle_precip_level_vs_category_barplot)
+
+# @ToDo: Split into summer, winter, or daylight, dark, in case those are
+# muddying the results.
+```
+
+Again, we see crimes that might be considered outdoor activites (bike theft,
+car prowl) at opposite ends.  And nor does any pattern leap out, in how
+prevalent the precipitation levels are per crime category.
+
+## Conclusion
+
+Long-time Seattle residents are known for ignoring the rain.  So it's not
+surprising that, overall...
+
+Seattle criminals just don't care if it's raining.
+
+(Remember, suggestions are welcome!!)
