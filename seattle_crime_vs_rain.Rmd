@@ -448,7 +448,26 @@ like to also indicate how reliable each category's information is.  That is,
 how many samples do we have for that category?  If we have lots of examples
 of some crime category, we can have more confidence that its mean is
 not just a quirk of this dataset.  To show this, the marker showing the
-mean is colored by the frequency of the category.
+mean is colored by the frequency of the category.  This doesn't have to be
+precise -- it's just to indicate which categories are better supported by
+the data.
+
+NOTE:  The use of color here is entirely deliberate.  I disagree strongly
+that color can never be used to indicate magnitude.  It is *frequently* so
+used in the physical sciences.  If you've seen a weather report on television,
+you've likely seen color used to indicate temperature on a map.  Color is
+used to show magnitude of a continuous function over a two-dimensional area.
+On a rendering of a 3D object, color can be used to show stress or heat
+levels.
+
+If you're in Dr. Howe's class, please see this discussion thread for more:
+
+https://www.coursera.org/learn/data-results/discussions/TEzHHb6WEeWlQwoU9G612w
+
+If you're reviewing this, I'd like your opinion on this particular use of
+color.  Come join the discussion in the forum -- do you think color can be
+used for magnitude? or would you try to avoid it? or would you never, ever
+so use it?
 
 This will be rendered as a web page, not a PDF file, in order to avoid issues
 with margins and page breaks that could interfere with large plots.  Because
