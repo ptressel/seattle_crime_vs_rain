@@ -12,7 +12,7 @@ Do criminals prefer rain, or avoid it, for particular crimes?
 
 Seattle is notorious for its rain.  I live in Seattle, and can attest to
 the rain...though it's less prevalent than its reputation would have one
-believe.  Nevertheless, Seattle has a good mix of rainiy and sunny weather,
+believe.  Nevertheless, Seattle has a good mix of rainy and sunny weather,
 so provides an opportunity for exploring weather-dependent activity
 choices...including crimes.
 
@@ -117,7 +117,7 @@ require(reshape2, quietly=TRUE)
 # all but the bare minimum set of columns -- others are retained and cleaned
 # up, in hope of getting a chance to do further analysis.
 
-seattle_4yr <- read.csv("seattle_incidents_2012_2015.csv")
+seattle_4yr <- read.csv("seattle_incidents_2012_2015.csv.gz")
 # > nrow(seattle_4yr)
 # [1] 365243
 
@@ -210,7 +210,7 @@ colnames(seattle_4yr)[colnames(seattle_4yr) ==
 # is below the displayed data.  Note I downloaded the data in batches, not all
 # at once, and concatenated it.  I don't know if there is a restriction on the
 # download size.
-seattle_weather <- read.csv("seattle_weather.csv")
+seattle_weather <- read.csv("seattle_weather.csv.gz")
 
 # Get date in same format as crime data -- we'll have to join on this field.
 seattle_weather$RDate <- ymd(seattle_weather$PST, tz="America/Los_Angeles")
@@ -576,25 +576,29 @@ seattle_precip_sd <- sd(seattle_4yr_weather$PrecipitationIn)
 So...the mean precipitation per crime category is not the same for all
 categories.  Does that mean we should proclaim that some crimes are better
 in the rain?  That when it rains, the police should be out watching for
-purse snatchers?  But wait...why is bike theft -- surely an outdoor crime --
-at the low precipitation end?
+purse snatchers?  Maybe rain and gloom provides cover for crime?  But
+no...bike theft -- surely an outdoor crime -- is at the low precipitation end.
 
-What we need to look at is the *effect size*.  By how much do those means
-actually differ, and is that large compared to some meaningful scale?  This
-is not related to statistical significance -- and effect can be highly
-significant, and still be utterly trival in magnitude.
+But are we being mislead by the precipitation scale?  By how much do those
+means actually differ, and is that large compared to some meaningful scale?
+What we need to look at is the *effect size*.  This is not related to
+statistical significance -- an effect can be highly significant, and still be
+utterly trival in magnitude.
 
 The difference between the highest and lowest mean is
 `r round(seattle_mean_precip_range[2] - seattle_mean_precip_range[1], digits=2)`.  Is that a lot or a little?  What should we use for a scale?
 One scale is the standard deviation of daily precipitation,
-`r round(seattle_precip_sd, digits=2).  Those are on a par.  (Remember,
+`r round(seattle_precip_sd, digits=2)`.  The means differ by about
+`r round((seattle_mean_precip_range[2] - seattle_mean_precip_range[1]) / seattle_precip_sd, digits=2)`
+of that standard deviation.  (Remember,
 we're not talking about significance here, so we don't want to use the
 standard deviation of the mean as a scale -- that can be made arbitrarily
 small by including more samples.)
 
-Perhaps a better scale is the standard deviations for each category.  We
-can see that the entire range of means falls within one standard deviation
-of the others.
+Perhaps a better scale would be the standard deviations for each category,
+shown by the bars around each mean in the above plot.  We can see that the
+entire range of means falls within one standard deviation of the others, for
+the standard deviation of any category.
 
 As we'll see in the next section, the span of the category means is about
 the size of precipitation ranges used for standard descriptions of
